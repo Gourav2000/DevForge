@@ -5,6 +5,28 @@ import fetch from "node-fetch";
 
 const OLLAMA = "http://127.0.0.1:11434";
 
+function sanitizeText(text) {
+  try {
+    // Fix common corrupted UTF-8 sequences
+    let cleaned = text
+      // Fix corrupted quotes and dashes (Windows-1252 → UTF-8 double encoding)
+    .replace(/â€"/g, '—')        
+    .replace(/â€œ/g, '"')        
+    .replace(/â€/g, '"')         
+    .replace(/â€™/g, "'")
+    .replace(/\uFFFD/g, '?'); 
+    
+    // Validate that we have valid UTF-8
+    Buffer.from(cleaned, 'utf8').toString('utf8');
+    
+    return cleaned;
+  } catch (error) {
+    console.warn(`Text sanitization failed, using fallback: ${error.message}`);
+    // Fallback: strip all non-ASCII characters
+    return text.replace(/[^\x00-\x7F]/g, '?');
+  }
+}
+
 /** Read or init the vector index JSON. */
 export function readIndex(indexPath) {
   try {
@@ -52,11 +74,12 @@ export function chunkFileContent(text, { maxChars = 2000, overlap = 200 } = {}) 
       chunks.push({
         text: slice.join("\n"),
         start,            // start line (0-based)
-        end: end - 1      // end line
+        end: Math.max(0, end - 1)     // end line
       });
     }
     if (end >= lines.length) break;
-    start = Math.max(end - Math.floor(overlap / 80), end - 3); // small line overlap heuristic
+    const nextStart = Math.max(end - Math.floor(overlap / 80), end - 3);
+    start = Math.max(start + 1, nextStart); // small line overlap heuristic
   }
   return chunks;
 }
@@ -141,7 +164,21 @@ export async function embedTexts(model, texts, { batchSize = 10 } = {}) {
 /** Upsert embeddings for a single file (chunks). */
 export async function embedFile({ root, file, model, index }) {
   const full = path.join(root, file.path);
-  const text = fs.readFileSync(full, "utf8");
+  
+  let text;
+  try {
+    const rawText = fs.readFileSync(full, "utf8");
+    text = sanitizeText(rawText); // ← Add this line
+    
+    if (!text.trim()) {
+      console.warn(`File ${file.path} is empty after sanitization, skipping`);
+      return { added: 0 };
+    }
+  } catch (error) {
+    console.error(`Failed to read/sanitize ${file.path}:`, error.message);
+    return { added: 0 };
+  }
+
   const chunks = chunkFileContent(text);
 
   if (!chunks.length) return { added: 0 };

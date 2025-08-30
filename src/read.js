@@ -21,8 +21,8 @@ function ensureDir(p) {
   fs.mkdirSync(p, { recursive: true });
 }
 
-function writeFileIfMissing(p, contents, force = false) {
-  if (!fs.existsSync(p) || force) {
+function writeFileIfMissing(p, contents, overwrite = false) {
+  if (!fs.existsSync(p) || overwrite) {
     fs.mkdirSync(path.dirname(p), { recursive: true });
     fs.writeFileSync(p, contents, "utf8");
     return true;
@@ -38,6 +38,7 @@ function loadJSONSafe(p) {
 }
 
 export async function readCommand({ force = false, silent = false } = {}) {
+
   const log = (...a) => { if (!silent) console.log(...a); };
   const root = findRepoRoot();
   const dot = path.join(root, ".devforge");
@@ -45,6 +46,17 @@ export async function readCommand({ force = false, silent = false } = {}) {
   const ignorePath = path.join(dot, "ignore");
   const manifestPath = path.join(dot, "manifest.json");
   const indexPath = path.join(dot, "index.json");
+
+  if (force) {
+    log(chalk.yellow("🔥 --force: Clearing cache (keeping your settings)"));
+    
+    [manifestPath, indexPath].forEach(filePath => {
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+        log(chalk.gray(`   ✓ Deleted ${path.basename(filePath)}`));
+      }
+    });
+  }
 
   // ---- Step 1: Preflight (Ollama + models) ----
   const existingCfg = loadJSONSafe(cfgPath);
@@ -145,7 +157,7 @@ const defaultConfig = {
 
   const cfg = existingCfg || defaultConfig;
 
-  const wroteCfg = writeFileIfMissing(cfgPath, JSON.stringify(cfg, null, 2), force);
+  const wroteCfg = writeFileIfMissing(cfgPath, JSON.stringify(cfg, null, 2), false);
   const defaultIgnore = [
     "node_modules/**",
     "dist/**",
@@ -160,7 +172,7 @@ const defaultConfig = {
     "**/*.pem",
     "id_*"
   ].join(os.EOL);
-  const wroteIgnore = writeFileIfMissing(ignorePath, defaultIgnore, force);
+  const wroteIgnore = writeFileIfMissing(ignorePath, defaultIgnore, false);
 
   log(
     wroteCfg
